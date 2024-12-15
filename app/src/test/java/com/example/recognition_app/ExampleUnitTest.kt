@@ -1,4 +1,4 @@
-package com.example.regontition_app
+package com.example.recognition_app
 
 import org.junit.Test
 

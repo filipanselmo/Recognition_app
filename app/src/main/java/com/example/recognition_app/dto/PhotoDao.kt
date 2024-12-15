@@ -1,4 +1,4 @@
-package com.example.regontition_app.dto
+package com.example.recognition_app.dto
 
 import androidx.room.Dao
 import androidx.room.Insert

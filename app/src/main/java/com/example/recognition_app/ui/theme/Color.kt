@@ -1,4 +1,4 @@
-package com.example.regontition_app.ui.theme
+package com.example.recognition_app.ui.theme
 
 import androidx.compose.ui.graphics.Color
 

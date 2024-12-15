@@ -1,18 +1,17 @@
 plugins {
     alias(libs.plugins.android.application)
     id ("org.jetbrains.kotlin.android")
-//    id("com.google.devtools.ksp") version "2.0.21-1.0.27"
     alias(libs.plugins.compose.compiler)
     alias(libs.plugins.compilerKsp)
 }
 
 android {
 
-    namespace = "com.example.regontition_app"
+    namespace = "com.example.recognition_app"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.example.regontition_app"
+        applicationId = "com.example.recognition_app"
         minSdk = 24
         targetSdk = 34
         versionCode = 1
@@ -58,17 +57,13 @@ android {
 }
 
 dependencies {
-//    val room_version = "2.6.1"
-//
-//    ksp("androidx.room:room-compiler:$room_version")
-//    implementation(libs.androidx.room.common)
-//    implementation(libs.androidx.room.ktx)
-//    annotationProcessor("androidx.room:room-compiler:$room_version")
-//    implementation("androidx.room:room-runtime:$room_version")
-
     implementation(libs.androidx.room)
     ksp(libs.androidx.room.ksp)
 
+    implementation ("com.squareup.retrofit2:retrofit:2.9.0")
+    implementation ("com.squareup.retrofit2:converter-gson:2.9.0")
+    implementation ("com.squareup.okhttp3:logging-interceptor:4.9.0")
+    implementation ("com.squareup.okhttp3:okhttp:4.9.1")
 
     implementation (libs.androidx.navigation.compose)
     implementation(libs.androidx.core.ktx)
