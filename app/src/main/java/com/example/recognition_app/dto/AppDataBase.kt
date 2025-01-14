@@ -4,18 +4,21 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.TypeConverters
+import com.example.recognition_app.utils.Converters
 
-@Database(entities = [Photo::class], version = 1, exportSchema = true)
+@Database(entities = [Photo::class, DetectionResult::class, DetectedObject::class], version = 8, exportSchema = true)
+@TypeConverters(Converters::class)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun photoDao(): PhotoDao
+    abstract fun detectionResultDao(): DetectionResultDao
+    abstract fun detectionObjectDao(): DetectedObjectDao
 
     companion object {
-        // Переменную INSTANCE делаем приватной, чтобы предотвратить прямое обращение к ней снаружи
         @Volatile
         private var INSTANCE: AppDatabase? = null
 
         fun getDatabase(context: Context): AppDatabase {
-            // Используем двойную проверку блокировки для оптимизации производительности
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: buildDatabase(context).also { INSTANCE = it }
             }
@@ -26,7 +29,8 @@ abstract class AppDatabase : RoomDatabase() {
                 context.applicationContext,
                 AppDatabase::class.java,
                 "photo_database"
-            ).build()
+            ).fallbackToDestructiveMigration() // Разрешаем разрушительные миграции
+                .build()
         }
     }
 }
