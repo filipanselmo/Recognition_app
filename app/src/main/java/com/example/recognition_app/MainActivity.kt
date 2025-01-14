@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -71,6 +72,7 @@ import okhttp3.ResponseBody
 import retrofit2.Call
 import retrofit2.Callback
 import retrofit2.Response
+import retrofit2.awaitResponse
 import java.io.File
 import java.io.FileOutputStream
 
@@ -130,6 +132,8 @@ fun PhotoCaptureScreen(
         rememberLauncherForActivityResult(ActivityResultContracts.TakePicturePreview()) { result ->
             bitmap = result // Получаем захваченное изображение
         }
+    var isLoading by remember { mutableStateOf(false) } // Состояние для прелоадера
+
 
 
     // Верхний тулбар
@@ -175,11 +179,36 @@ fun PhotoCaptureScreen(
 
         Button(onClick = {
             bitmap?.let { capturedBitmap ->
+                isLoading = true // Устанавливаем состояние загрузки
                 coroutineScope.launch {
-                    uploadPhoto(context, capturedBitmap)
-                    sharedViewModel.bitmap = capturedBitmap // Сохраняем Bitmap в ViewModel
-                    // Переход на экран результатов после сохранения фотографии
-                    navController.navigate("result/${System.currentTimeMillis()}")
+                    val uploadSuccess = uploadPhoto(context, capturedBitmap) // Загружаем фото
+
+                    if (uploadSuccess) {
+                        sharedViewModel.bitmap = capturedBitmap // Сохраняем Bitmap в ViewModel
+
+                        // Загружаем фото и результаты
+                        fetchPhotosAndResults(context, database) { results ->
+                            isLoading = false // Сбрасываем состояние загрузки
+                            if (results.isNotEmpty()) {
+                                navController.navigate("result/${System.currentTimeMillis()}")
+                            } else {
+                                Toast.makeText(context, "Нет результатов", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    } else {
+                        isLoading = false // Сбрасываем состояние загрузки в случае ошибки
+                        Toast.makeText(context, "Ошибка загрузки изображения", Toast.LENGTH_SHORT).show()
+                    }
+//                    uploadPhoto(context, capturedBitmap)
+//                    sharedViewModel.bitmap = capturedBitmap // Сохраняем Bitmap в ViewModel
+//                    // Загружаем фото и результаты
+//                    fetchPhotosAndResults(context, database) { results ->
+//                        if (results.isNotEmpty()) {
+//                            navController.navigate("result/${System.currentTimeMillis()}")
+//                        } else {
+//                            Toast.makeText(context, "Нет результатов", Toast.LENGTH_SHORT).show()
+//                        }
+//                    }
                 }
             } ?: run {
                 // Обработка случая, когда bitmap равен null (например, пользователь не сделал фотографию)
@@ -187,25 +216,28 @@ fun PhotoCaptureScreen(
             }
             // Логика перехода на экран результатов
         }) {
-            Text("Отправить на обработку")
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-        Button(onClick = {
-            fetchPhotosAndResults(context, database)
-//            fetchPhotos(context, database)
-        }) {
             Text("Показать результаты")
         }
 
         Spacer(modifier = Modifier.height(16.dp))
-
-        val imagePath = "${context.filesDir}/test_images/test1.jpg"
-        Button(onClick = {
-            testUploadPhoto(context, imagePath)
-        }) {
-            Text("Тестирование YOLO")
+//        Button(onClick = {
+//            fetchPhotosAndResults(context, database)
+////            fetchPhotos(context, database)
+//        }) {
+//            Text("Показать результаты")
+//        }
+        if (isLoading) {
+            CircularProgressIndicator()
         }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+//        val imagePath = "${context.filesDir}/test_images/test1.jpg"
+//        Button(onClick = {
+//            testUploadPhoto(context, imagePath)
+//        }) {
+//            Text("Тестирование YOLO")
+//        }
 
     }
 
@@ -298,34 +330,59 @@ fun ResultScreen(bitmap: Bitmap?, navController: NavHostController, database: Ap
 /**
  * Отправляет фото на сервер
  */
-fun uploadPhoto(context: Context, capturedBitmap: Bitmap) {
-    val file = File(context.cacheDir, "captured_image.jpg")
-    FileOutputStream(file).use { out ->
-        capturedBitmap.compress(Bitmap.CompressFormat.JPEG, 100, out)
+suspend fun uploadPhoto(context: Context, capturedBitmap: Bitmap): Boolean {
+    return withContext(Dispatchers.IO) {
+        val file = File(context.cacheDir, "captured_image.jpg")
+        FileOutputStream(file).use { out ->
+            capturedBitmap.compress(Bitmap.CompressFormat.JPEG, 100, out)
+        }
+
+        val requestFile = MultipartBody.Part.createFormData("file", file.name, RequestBody.create("image/jpeg".toMediaTypeOrNull(), file))
+
+        try {
+            val response = RetrofitClient.apiService.uploadPhoto(requestFile).awaitResponse()
+            if (response.isSuccessful) {
+                println("File uploaded successfully")
+                true
+            } else {
+                println("Upload failed: ${response.message()}")
+                false
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
     }
-    val requestFile = MultipartBody.Part.createFormData(
-        "file", file.name,
-        RequestBody.create("image/jpeg".toMediaTypeOrNull(), file)
-    )
-
-    RetrofitClient.apiService.uploadPhoto(requestFile)
-        .enqueue(object : retrofit2.Callback<ResponseBody> {
-            override fun onResponse(
-                call: Call<ResponseBody>,
-                response: retrofit2.Response<ResponseBody>
-            ) {
-                if (response.isSuccessful) {
-                    println("File uploaded successfully")
-                } else {
-                    println("Upload failed: ${response.message()}")
-                }
-            }
-
-            override fun onFailure(call: Call<ResponseBody>, t: Throwable) {
-                t.printStackTrace()
-            }
-        })
 }
+
+//fun uploadPhoto(context: Context, capturedBitmap: Bitmap) {
+//    val file = File(context.cacheDir, "captured_image.jpg")
+//    FileOutputStream(file).use { out ->
+//        capturedBitmap.compress(Bitmap.CompressFormat.JPEG, 100, out)
+//    }
+//    val requestFile = MultipartBody.Part.createFormData(
+//        "file", file.name,
+//        RequestBody.create("image/jpeg".toMediaTypeOrNull(), file)
+//    )
+//
+//    RetrofitClient.apiService.uploadPhoto(requestFile)
+//        .enqueue(object : retrofit2.Callback<ResponseBody> {
+//            override fun onResponse(
+//                call: Call<ResponseBody>,
+//                response: retrofit2.Response<ResponseBody>
+//            ) {
+//                if (response.isSuccessful) {
+//                    println("File uploaded successfully")
+//                } else {
+//                    println("Upload failed: ${response.message()}")
+//                }
+//            }
+//
+//            override fun onFailure(call: Call<ResponseBody>, t: Throwable) {
+//                t.printStackTrace()
+//            }
+//        })
+//}
 
 /**
  * Тестовая функция для отладки через эмулятор
@@ -407,30 +464,61 @@ fun savePhotos(photos: List<Photo>, context: Context, database: AppDatabase) {
 /**
  * Получает информацию о результатах распознавания изображений на фотографии
  */
-fun fetchPhotosAndResults(context: Context, database: AppDatabase) {
-    RetrofitClient.apiService.fetchPhotosWithResults()
-        .enqueue(object : Callback<List<PhotoWithResults>> {
-            override fun onResponse(
-                call: Call<List<PhotoWithResults>>,
-                response: Response<List<PhotoWithResults>>
-            ) {
-                if (response.isSuccessful) {
-                    CoroutineScope(Dispatchers.IO).launch {
-                        response.body()?.let { photosWithResults ->
-                            savePhotosAndResults(photosWithResults, context, database)
+
+fun fetchPhotosAndResults(context: Context, database: AppDatabase, onResultsFetched: (List<DetectionResult>) -> Unit) {
+    RetrofitClient.apiService.fetchPhotosWithResults().enqueue(object : Callback<List<PhotoWithResults>> {
+        override fun onResponse(call: Call<List<PhotoWithResults>>, response: Response<List<PhotoWithResults>>) {
+            if (response.isSuccessful) {
+                CoroutineScope(Dispatchers.IO).launch {
+                    response.body()?.let { photosWithResults ->
+                        savePhotosAndResults(photosWithResults, context, database)
+
+                        // Получаем последний сохраненный photoId
+                        val lastPhotoId = fetchLastPhotoId(database)
+
+                        // Получаем результаты для последнего фото
+                        val results = fetchResultsFromDatabase(database, lastPhotoId)
+
+                        // Возвращаем результаты через callback
+                        withContext(Dispatchers.Main) {
+                            onResultsFetched(results)
                         }
                     }
-
-                } else {
-                    println("Fetch failed: ${response.message()}")
                 }
+            } else {
+                println("Fetch failed: ${response.message()}")
             }
+        }
 
-            override fun onFailure(call: Call<List<PhotoWithResults>>, t: Throwable) {
-                t.printStackTrace()
-            }
-        })
+        override fun onFailure(call: Call<List<PhotoWithResults>>, t: Throwable) {
+            t.printStackTrace()
+        }
+    })
 }
+//fun fetchPhotosAndResults(context: Context, database: AppDatabase) {
+//    RetrofitClient.apiService.fetchPhotosWithResults()
+//        .enqueue(object : Callback<List<PhotoWithResults>> {
+//            override fun onResponse(
+//                call: Call<List<PhotoWithResults>>,
+//                response: Response<List<PhotoWithResults>>
+//            ) {
+//                if (response.isSuccessful) {
+//                    CoroutineScope(Dispatchers.IO).launch {
+//                        response.body()?.let { photosWithResults ->
+//                            savePhotosAndResults(photosWithResults, context, database)
+//                        }
+//                    }
+//
+//                } else {
+//                    println("Fetch failed: ${response.message()}")
+//                }
+//            }
+//
+//            override fun onFailure(call: Call<List<PhotoWithResults>>, t: Throwable) {
+//                t.printStackTrace()
+//            }
+//        })
+//}
 
 /**
  * Сохраняет связку фотографий и результата распознавания
