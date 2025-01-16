@@ -8,8 +8,7 @@ import androidx.room.Query
 @Dao
 interface PhotoDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-//    suspend fun insert(photo: Photo)
-    suspend fun insert(photo: Photo) : Long
+    suspend fun insert(photo: Photo): Long
 
     @Query("SELECT * FROM photos")
     suspend fun getAllPhotos(): List<Photo>

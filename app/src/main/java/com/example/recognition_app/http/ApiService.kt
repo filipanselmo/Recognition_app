@@ -19,14 +19,10 @@ interface ApiService {
     @POST("/upload")
     fun uploadPhoto(@Part file: MultipartBody.Part): Call<ResponseBody>
 
-//    @GET("/original-photos")
     @GET("/original-photos")
     fun fetchPhotos(): Call<List<Photo>>
 
-    // Новый метод для получения фотографий с результатами обнаружения
-//    @GET("/photos-with-results")
     @GET("/photos")
-//    fun fetchPhotosWithResults(): Call<List<Pair<Photo, List<DetectionResult>>>>
     fun fetchPhotosWithResults(): Call<List<PhotoWithResults>>
 
 }

@@ -5,11 +5,14 @@ import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
-@Entity(tableName = "detection_results",
+@Entity(
+    tableName = "detection_results",
     foreignKeys = [
-        ForeignKey(entity = Photo::class,
+        ForeignKey(
+            entity = Photo::class,
             parentColumns = ["id"],
-            childColumns = ["photoId"])
+            childColumns = ["photoId"]
+        )
     ],
     indices = [
         Index(value = ["photoId"], unique = false)

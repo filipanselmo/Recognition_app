@@ -7,7 +7,11 @@ import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
 import com.example.recognition_app.utils.Converters
 
-@Database(entities = [Photo::class, DetectionResult::class, DetectedObject::class], version = 8, exportSchema = true)
+@Database(
+    entities = [Photo::class, DetectionResult::class, DetectedObject::class],
+    version = 8,
+    exportSchema = true
+)
 @TypeConverters(Converters::class)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun photoDao(): PhotoDao
@@ -29,7 +33,7 @@ abstract class AppDatabase : RoomDatabase() {
                 context.applicationContext,
                 AppDatabase::class.java,
                 "photo_database"
-            ).fallbackToDestructiveMigration() // Разрешаем разрушительные миграции
+            ).fallbackToDestructiveMigration()
                 .build()
         }
     }
