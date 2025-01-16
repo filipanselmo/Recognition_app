@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Результаты обработки изображений</title>
+    <style>
+        table {width: 100%; border-collapse: collapse;}
+        th, td {border: 1px solid #ddd; padding: 8px; text-align: left;}
+        img {width: 100px;}
+    </style>
+</head>
+<body>
+    <h1>Результаты обработки изображений</h1>
+     <div>
+        {% if paged_results.has_prev %}
+            <a href="{{ url_for('home', page=paged_results.prev_num) }}">Назад</a>
+        {% endif %}
+        {% if paged_results.has_next %}
+            <a href="{{ url_for('home', page=paged_results.next_num) }}">Вперёд</a>
+        {% endif %}
+    </div>
+    <table>
+        <thead>
+            <tr>
+                <th>Превью</th>
+                <th>Название</th>
+                <th>Confidence</th>
+                <th>x_min</th>
+                <th>y_min</th>
+                <th>x_max</th>
+                <th>y_max</th>
+            </tr>
+        </thead>
+        <tbody>
+              {% for photo in photos %}
+        {% for result in paged_results.items %}
+            {% if result.photo_id == photo.id %}
+                <tr>
+                    <td><img src="{{ url_for('uploaded_file', filename=photo.filename) }}" alt="Preview"></td>
+                    <td>{{ result.label }}</td>
+                    <td>{{ result.confidence }}</td>
+                    <td>{{ result.x_min }}</td>
+                    <td>{{ result.y_min }}</td>
+                    <td>{{ result.x_max }}</td>
+                    <td>{{ result.y_max }}</td>
+                </tr>
+            {% endif %}
+        {% endfor %}
+    {% endfor %}
+        </tbody>
+    </table>
+
+    <div>
+        {% if paged_results.has_prev %}
+            <a href="{{ url_for('home', page=paged_results.prev_num) }}">Назад</a>
+        {% endif %}
+        {% if paged_results.has_next %}
+            <a href="{{ url_for('home', page=paged_results.next_num) }}">Вперёд</a>
+        {% endif %}
+    </div>
+</body>
+</html>
