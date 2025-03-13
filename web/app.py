@@ -1,19 +1,28 @@
+import base64
+import logging
+import os
+import uuid
+from PIL import Image, ImageDraw
+
+import torch
+from torchvision import transforms
 from flask import Flask, render_template, send_from_directory, request, jsonify
 from flask_cors import CORS
-from dbModels import db, DetectionResult, Photo, Planogram, ComplianceCheckResult
-from yolo import YOLO
-import uuid
-import os
-import json
-import logging
-import base64
+from scipy import io
+
+from OptimizedYOLO import OptimizedYOLO
+from dbModels import db, DetectionResult, Photo, Planogram, ComplianceCheckResult, Embedding
+from gan import augment_image
+from triplet_net import TripletNet
 
 app = Flask(__name__)
 app.config.from_object('config.Config')
 CORS(app)
 db.init_app(app)
 
-yolo = YOLO()
+yolo = OptimizedYOLO()
+triplet_net = TripletNet()
+
 
 # Расчет Intersection over Union
 def calculate_iou(box1, box2):
@@ -27,6 +36,7 @@ def calculate_iou(box1, box2):
     box2_area = (box2[2] - box2[0]) * (box2[3] - box2[1])
     iou = inter_area / float(box1_area + box2_area - inter_area)
     return iou
+
 
 def generate_recommendations(compliance_checks):
     recommendations = []
@@ -46,6 +56,7 @@ def generate_recommendations(compliance_checks):
                 'priority': 'low'
             })
     return recommendations
+
 
 def draw_boxes(photo):
     try:
@@ -93,14 +104,15 @@ def draw_boxes(photo):
         print(f"Error drawing boxes: {str(e)}")
         return None
 
+
 @app.route('/', methods=['GET'])
 def home():
     page = request.args.get('page', 1, type=int)
     per_page = 10
-    paged_results = DetectionResult.query.order_by(DetectionResult.photo_id).paginate(page=page, per_page=per_page, error_out=False)
+    paged_results = DetectionResult.query.order_by(DetectionResult.photo_id).paginate(page=page, per_page=per_page,
+                                                                                      error_out=False)
     photos = Photo.query.all()
     return render_template('index.html', photos=photos, paged_results=paged_results)
-
 
 
 # Добавляем новый маршрут для загрузки файлов из папки 'uploads'
@@ -115,63 +127,50 @@ def upload_photo():
         return jsonify({'error': 'No file part'}), 400
 
     file = request.files['file']
-    if file.filename == '':
-        return jsonify({'error': 'No selected file'}), 400
+    shelf_id = request.form.get('shelf_id')
+    if not shelf_id:
+        return jsonify({'error': 'shelf_id is required'}), 400
 
-    # Сохранение файла временно на диск
-
-    # Генерация нового имени файла
-    new_filename = f"{uuid.uuid4().hex}_{file.filename}"
-    # # Путь к новому файлу
-    file_path = os.path.join('uploads', new_filename)
-    # Сохранение файла под новым именем
-    file.save(file_path)
-
-
-    # Обработка изображения с помощью YOLO
-    results_json = yolo.detect_objects(file_path)
-
-    # Преобразуем строку JSON в список словарей
-    try:
-        results_json = json.loads(results_json)
-        print("Detection Results:", results_json)  # Добавьте эту строку для отладки
-    except json.JSONDecodeError as e:
-        return jsonify({'error': 'Failed to decode JSON: ' + str(e)}), 500
-
-    file.seek(0)  # Возвращаем указатель обратно в начало файла для последующих операций
-    new_photo = Photo(filename=new_filename, content=file.read(), shelf_id=shelf_id)
-    db.session.add(new_photo)
-    # Теперь сохраняем изменения, чтобы получить photo.id
+    # Сохранение файла
+    filename = f"{uuid.uuid4()}_{file.filename}"
+    image = Image.open(file.stream)
+    augmented_image = augment_image(image)
+    img_byte_arr = io.BytesIO()
+    augmented_image.save(img_byte_arr, format='PNG')
+    photo = Photo(
+        filename=filename,
+        content=img_byte_arr.getvalue(),
+        shelf_id=shelf_id
+    )
+    db.session.add(photo)
     db.session.commit()
-    print("DBAdd Results:", new_photo.id)  # для отладки
 
-    for result in results_json:
-        # Проверяем, что результат - это словарь
-        if isinstance(result, dict):
-            detection_result = DetectionResult(
-                photo_id=new_photo.id,
-                label=result.get('name'),  # 'name' или 'label' в зависимости от структуры результата
-                confidence=result.get('confidence'),
-                x_min=result.get('xmin'),
-                y_min=result.get('ymin'),
-                x_max=result.get('xmax'),
-                y_max=result.get('ymax')
-            )
+    # Детектирование
+    detections = yolo.detect(augmented_image)
+    for det in detections:
+        detection = DetectionResult(
+            photo_id=photo.id,
+            label=det['class'],
+            confidence=det['confidence'],
+            x_min=det['bbox'][0],
+            y_min=det['bbox'][1],
+            x_max=det['bbox'][2],
+            y_max=det['bbox'][3]
+        )
+        db.session.add(detection)
+    db.session.commit()
 
-            print("Adding Detection Result:", detection_result)  # Для отладки
-            db.session.add(detection_result)
+    # Генерация эмбеддингов
+    img_tensor = transforms.ToTensor()(augmented_image).unsqueeze(0)
+    with torch.no_grad():
+        embedding = triplet_net(img_tensor).numpy()
+    emb = Embedding(photo_id=photo.id, features=embedding.tobytes())
+    db.session.add(emb)
+    db.session.commit()
 
-    try:
-        db.session.commit()
-        # Сверка с планограммой
-        shelf_id = request.form.get('shelf_id', 'default_shelf')  # Получение shelf_id из метаданных
-        check_compliance(new_photo.id, shelf_id)
-
-        return jsonify({'message': 'Image uploaded successfully', 'results': results_json}), 201
-    except Exception as e:
-        db.session.rollback()  # Откат транзакции при ошибке
-        print("Error committing to database:", e)  # Для отладки
-        return jsonify({'error': str(e)}), 500
+    # Проверка соответствия планограмме
+    check_compliance(photo.id, shelf_id)
+    return jsonify({'message': 'Success'}), 201
 
 
 def check_compliance(photo_id, shelf_id):
@@ -228,21 +227,6 @@ def check_compliance(photo_id, shelf_id):
     db.session.commit()
 
 
-# @app.route('/photos', methods=['GET'])
-# def get_photos():
-#     photos = Photo.query.all()
-#     results = []
-#     for photo in photos:
-#         detection_results = DetectionResult.query.filter_by(photo_id=photo.id).all()
-#         detected_objects = [{'label': result.label, 'confidence': result.confidence} for result in detection_results]
-#         results.append({
-#             'id': photo.id,
-#             'filename': photo.filename,
-#             'detected_objects': detected_objects
-#         })
-#         print("На мобильный клиент отправлено:", len(results))# Для отладки
-#     return jsonify(results), 200
-
 @app.route('/photos', methods=['GET'])
 def get_photos():
     photos = Photo.query.all()
@@ -271,6 +255,7 @@ def get_photos():
         results.append(photo_data)
 
     return jsonify(results), 200
+
 
 @app.route('/detection-results', methods=['GET'])
 def get_detection_results():
@@ -337,4 +322,3 @@ if __name__ == '__main__':
     with app.app_context():
         db.create_all()
         app.run(host='0.0.0.0', port=5000, debug=True)
-

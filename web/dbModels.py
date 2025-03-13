@@ -19,6 +19,7 @@ class Photo(db.Model):
     created_at = db.Column(db.DateTime, default=db.func.current_timestamp())
     shelf_id = db.Column(db.String, nullable=False)
     compliance_checks = db.relationship('ComplianceCheckResult', backref='photo', lazy=True)
+    embeddings = db.relationship('Embedding', backref='photo', lazy=True)
 
 
 class DetectionResult(db.Model):
@@ -57,3 +58,7 @@ class ComplianceCheckResult(db.Model):
     created_at = db.Column(db.DateTime, default=db.func.current_timestamp())
 
 
+class Embedding(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    photo_id = db.Column(db.Integer, db.ForeignKey('photo.id'), nullable=False)
+    features = db.Column(db.LargeBinary, nullable=False) 
