@@ -17,6 +17,8 @@ class Photo(db.Model):
     filename = db.Column(db.String, nullable=False)
     content = db.Column(db.LargeBinary, nullable=False)
     created_at = db.Column(db.DateTime, default=db.func.current_timestamp())
+    shelf_id = db.Column(db.String, nullable=False)
+    compliance_checks = db.relationship('ComplianceCheckResult', backref='photo', lazy=True)
 
 
 class DetectionResult(db.Model):
@@ -33,10 +35,25 @@ class DetectionResult(db.Model):
     # Связь с моделью Photo
     photo = db.relationship('Photo', backref=db.backref('detection_results', lazy=True))
 
-# class DetectionResult(db.Model):
-#     id = db.Column(db.Integer, primary_key=True)
-#     photo_id = db.Column(db.Integer, db.ForeignKey('photo.id'), nullable=False)
-#     label = db.Column(db.String, nullable=False)
-#     confidence = db.Column(db.Float, nullable=False)
-#     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-#     photo = db.relationship('Photo', backref=db.backref('detection_results', lazy=True))
+# Модель для планограммы
+class Planogram(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    shelf_id = db.Column(db.String, nullable=False)
+    sku = db.Column(db.String, nullable=False)
+    x_min = db.Column(db.Float, nullable=False)
+    y_min = db.Column(db.Float, nullable=False)
+    x_max = db.Column(db.Float, nullable=False)
+    y_max = db.Column(db.Float, nullable=False)
+    quantity = db.Column(db.Integer, nullable=False)
+    created_at = db.Column(db.DateTime, default=db.func.current_timestamp())
+
+# Модель для результатов сверки
+class ComplianceCheckResult(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    photo_id = db.Column(db.Integer, db.ForeignKey('photo.id'), nullable=False)
+    sku = db.Column(db.String, nullable=False)
+    missing_count = db.Column(db.Integer, nullable=False)
+    extra_count = db.Column(db.Integer, nullable=False)
+    created_at = db.Column(db.DateTime, default=db.func.current_timestamp())
+
+

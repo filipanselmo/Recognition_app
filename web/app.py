@@ -1,6 +1,6 @@
 from flask import Flask, render_template, send_from_directory, request, jsonify
 from flask_cors import CORS
-from dbModels import db, DetectionResult, Photo
+from dbModels import db, DetectionResult, Photo, Planogram, ComplianceCheckResult
 from yolo import YOLO
 import uuid
 import os
@@ -15,6 +15,83 @@ db.init_app(app)
 
 yolo = YOLO()
 
+# Расчет Intersection over Union
+def calculate_iou(box1, box2):
+    xA = max(box1[0], box2[0])
+    yA = max(box1[1], box2[1])
+    xB = min(box1[2], box2[2])
+    yB = min(box1[3], box2[3])
+
+    inter_area = max(0, xB - xA) * max(0, yB - yA)
+    box1_area = (box1[2] - box1[0]) * (box1[3] - box1[1])
+    box2_area = (box2[2] - box2[0]) * (box2[3] - box2[1])
+    iou = inter_area / float(box1_area + box2_area - inter_area)
+    return iou
+
+def generate_recommendations(compliance_checks):
+    recommendations = []
+    for check in compliance_checks:
+        if check.missing_count > 0:
+            recommendations.append({
+                'sku': check.sku,
+                'action': 'restock',
+                'quantity': check.missing_count,
+                'priority': 'high' if check.missing_count > 2 else 'medium'
+            })
+        if check.extra_count > 0:
+            recommendations.append({
+                'sku': check.sku,
+                'action': 'remove',
+                'quantity': check.extra_count,
+                'priority': 'low'
+            })
+    return recommendations
+
+def draw_boxes(photo):
+    try:
+        image = Image.open(io.BytesIO(photo.content))
+        draw = ImageDraw.Draw(image)
+        width, height = image.size
+
+        # Отрисовка планограммы
+        planogram_entries = Planogram.query.filter_by(shelf_id=photo.shelf_id).all()
+        for entry in planogram_entries:
+            x_min = entry.x_min * width
+            y_min = entry.y_min * height
+            x_max = entry.x_max * width
+            y_max = entry.y_max * height
+            draw.rectangle([x_min, y_min, x_max, y_max], outline="blue", width=3)
+            draw.text((x_min, y_min - 15), f"Plan: {entry.sku}", fill="blue")
+
+        # Отрисовка детекций
+        detections = DetectionResult.query.filter_by(photo_id=photo.id).all()
+        for det in detections:
+            x_min = det.x_min * width
+            y_min = det.y_min * height
+            x_max = det.x_max * width
+            y_max = det.y_max * height
+            draw.rectangle([x_min, y_min, x_max, y_max], outline="green", width=2)
+            draw.text((x_min, y_max + 5), f"{det.label} {det.confidence:.2f}", fill="green")
+
+        # Отрисовка отклонений
+        compliance_checks = ComplianceCheckResult.query.filter_by(photo_id=photo.id).all()
+        for check in compliance_checks:
+            if check.missing_count > 0:
+                entry = Planogram.query.filter_by(shelf_id=photo.shelf_id, sku=check.sku).first()
+                if entry:
+                    x_min = entry.x_min * width
+                    y_min = entry.y_min * height
+                    x_max = entry.x_max * width
+                    y_max = entry.y_max * height
+                    draw.rectangle([x_min, y_min, x_max, y_max], outline="red", width=3)
+                    draw.text((x_min, y_min - 30), f"Missing: {check.missing_count}", fill="red")
+
+        buf = io.BytesIO()
+        image.save(buf, format='PNG')
+        return base64.b64encode(buf.getvalue()).decode('utf-8')
+    except Exception as e:
+        print(f"Error drawing boxes: {str(e)}")
+        return None
 
 @app.route('/', methods=['GET'])
 def home():
@@ -62,9 +139,8 @@ def upload_photo():
         return jsonify({'error': 'Failed to decode JSON: ' + str(e)}), 500
 
     file.seek(0)  # Возвращаем указатель обратно в начало файла для последующих операций
-    new_photo = Photo(filename=new_filename, content=file.read())
+    new_photo = Photo(filename=new_filename, content=file.read(), shelf_id=shelf_id)
     db.session.add(new_photo)
-
     # Теперь сохраняем изменения, чтобы получить photo.id
     db.session.commit()
     print("DBAdd Results:", new_photo.id)  # для отладки
@@ -87,6 +163,10 @@ def upload_photo():
 
     try:
         db.session.commit()
+        # Сверка с планограммой
+        shelf_id = request.form.get('shelf_id', 'default_shelf')  # Получение shelf_id из метаданных
+        check_compliance(new_photo.id, shelf_id)
+
         return jsonify({'message': 'Image uploaded successfully', 'results': results_json}), 201
     except Exception as e:
         db.session.rollback()  # Откат транзакции при ошибке
@@ -94,19 +174,102 @@ def upload_photo():
         return jsonify({'error': str(e)}), 500
 
 
+def check_compliance(photo_id, shelf_id):
+    # Получение планограммы для полки
+    planogram_entries = Planogram.query.filter_by(shelf_id=shelf_id).all()
+    detected_boxes = DetectionResult.query.filter_by(photo_id=photo_id).all()
+
+    sku_stats = {}
+    for entry in planogram_entries:
+        sku = entry.sku
+        expected_quantity = entry.quantity
+        sku_stats[sku] = {
+            'expected': expected_quantity,
+            'detected': 0,
+            'missing': 0,
+            'extra': 0
+        }
+
+    # Подсчет обнаруженных товаров
+    for detection in detected_boxes:
+        matched = False
+        for entry in planogram_entries:
+            if detection.label == entry.sku:
+                iou = calculate_iou(
+                    [detection.x_min, detection.y_min, detection.x_max, detection.y_max],
+                    [entry.x_min, entry.y_min, entry.x_max, entry.y_max]
+                )
+                if iou > 0.5:  # Порог IoU для совпадения
+                    sku_stats[entry.sku]['detected'] += 1
+                    matched = True
+                    break
+        if not matched:
+            # Лишний товар
+            compliance_result = ComplianceCheckResult(
+                photo_id=photo_id,
+                sku=detection.label,
+                missing_count=0,
+                extra_count=1
+            )
+            db.session.add(compliance_result)
+
+    # Вычисление недостачи
+    for sku, stats in sku_stats.items():
+        missing = stats['expected'] - stats['detected']
+        if missing > 0:
+            compliance_result = ComplianceCheckResult(
+                photo_id=photo_id,
+                sku=sku,
+                missing_count=missing,
+                extra_count=0
+            )
+            db.session.add(compliance_result)
+
+    db.session.commit()
+
+
+# @app.route('/photos', methods=['GET'])
+# def get_photos():
+#     photos = Photo.query.all()
+#     results = []
+#     for photo in photos:
+#         detection_results = DetectionResult.query.filter_by(photo_id=photo.id).all()
+#         detected_objects = [{'label': result.label, 'confidence': result.confidence} for result in detection_results]
+#         results.append({
+#             'id': photo.id,
+#             'filename': photo.filename,
+#             'detected_objects': detected_objects
+#         })
+#         print("На мобильный клиент отправлено:", len(results))# Для отладки
+#     return jsonify(results), 200
+
 @app.route('/photos', methods=['GET'])
 def get_photos():
     photos = Photo.query.all()
     results = []
+
     for photo in photos:
-        detection_results = DetectionResult.query.filter_by(photo_id=photo.id).all()
-        detected_objects = [{'label': result.label, 'confidence': result.confidence} for result in detection_results]
-        results.append({
+        annotated_image = draw_boxes(photo)
+
+        compliance_checks = ComplianceCheckResult.query.filter_by(photo_id=photo.id).all()
+        compliance_info = [{
+            'sku': check.sku,
+            'missing': check.missing_count,
+            'extra': check.extra_count
+        } for check in compliance_checks]
+
+        recommendations = generate_recommendations(compliance_checks)
+
+        photo_data = {
             'id': photo.id,
             'filename': photo.filename,
-            'detected_objects': detected_objects
-        })
-        print("На мобильный клиент отправлено:", len(results))# Для отладки
+            'shelf_id': photo.shelf_id,
+            'annotated_image': annotated_image,
+            'compliance_info': compliance_info,
+            'recommendations': recommendations
+        }
+        results.append(photo_data)
+
     return jsonify(results), 200
 
 @app.route('/detection-results', methods=['GET'])
