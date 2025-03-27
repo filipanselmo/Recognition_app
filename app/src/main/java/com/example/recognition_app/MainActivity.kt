@@ -3,53 +3,10 @@ package com.example.recognition_app
 import android.content.Context
 import android.graphics.Bitmap
 import android.os.Bundle
-import android.widget.Toast
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.activity.result.launch
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -57,8 +14,14 @@ import com.example.recognition_app.dto.AppDatabase
 import com.example.recognition_app.dto.DetectionResult
 import com.example.recognition_app.dto.Photo
 import com.example.recognition_app.dto.PhotoWithResults
+import com.example.recognition_app.dto.Task
+import com.example.recognition_app.dto.TaskStatusUpdate
 import com.example.recognition_app.http.RetrofitClient
+import com.example.recognition_app.screens.PhotoCaptureScreen
+import com.example.recognition_app.screens.ResultScreen
+import com.example.recognition_app.screens.TaskScreen
 import com.example.recognition_app.ui.theme.Regontition_appTheme
+import com.example.recognition_app.viemodels.SharedViewModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -91,15 +54,26 @@ class MainActivity : ComponentActivity() {
             val navController = rememberNavController()
             val sharedViewModel: SharedViewModel = viewModel() // Получаем ViewModel
             Regontition_appTheme {
-                NavHost(navController, startDestination = "screen1") {
-                    composable("screen1") {
-                        PhotoCaptureScreen(navController, database, sharedViewModel)
+                NavHost(navController, startDestination = "task_screen") {
+                    composable("task_screen") {
+                        TaskScreen(navController)
                     }
-                    composable("result/{result}") {
+                    composable("photo_capture/{taskId}") { backStackEntry ->
+                        val taskId = backStackEntry.arguments?.getString("taskId")?.toLongOrNull()
+                        PhotoCaptureScreen(
+                            navController,
+                            database,
+                            sharedViewModel,
+                            taskId = taskId
+                        )
+                    }
+                    composable("result/{taskId}") { backStackEntry ->
+                        val taskId = backStackEntry.arguments?.getString("taskId")
                         ResultScreen(
                             sharedViewModel.bitmap,
                             navController,
-                            database
+                            database,
+                            taskId?.toLongOrNull()
                         )
                     }
                 }
@@ -108,182 +82,35 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-/**
- * Функция для создания и последующей работы с фотографиями
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun PhotoCaptureScreen(
-    navController: NavHostController,
-    database: AppDatabase,
-    sharedViewModel: SharedViewModel
-) {
 
-    val context = LocalContext.current
-    val coroutineScope = rememberCoroutineScope()
-
-    var bitmap by remember { mutableStateOf<Bitmap?>(null) } // Используем mutableStateOf для состояния
-    val launcher =
-        rememberLauncherForActivityResult(ActivityResultContracts.TakePicturePreview()) { result ->
-            bitmap = result // Получаем захваченное изображение
-        }
-    var isLoading by remember { mutableStateOf(false) } // Состояние для прелоадера
-
-
-    // Верхний тулбар
-    TopAppBar(
-        title = { Text("Распознавание изображений", fontSize = 18.sp) },
-        navigationIcon = {
-            IconButton({ }) {
-                Icon(
-                    Icons.Filled.Menu,
-                    contentDescription = "Меню"
-                )
+suspend fun fetchTasks(onSuccess: (List<Task>) -> Unit) {
+    withContext(Dispatchers.IO) {
+        try {
+            val response = RetrofitClient.apiService.getTasks().awaitResponse()
+            if (response.isSuccessful) {
+                onSuccess(response.body() ?: emptyList())
             }
-        },
-        actions = {
-            IconButton({ }) { Icon(Icons.Filled.Info, contentDescription = "О приложении") }
-            IconButton({ }) { Icon(Icons.Filled.Search, contentDescription = "Поиск") }
-        },
-        colors = TopAppBarDefaults.topAppBarColors(
-            containerColor = Color.Blue,
-            titleContentColor = Color.White,
-            navigationIconContentColor = Color.White,
-            actionIconContentColor = Color.White
-        )
-    )
-
-    Column(
-        modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Text("Сделайте фотографию")
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Button(onClick = {
-            // Запускаем захват изображения
-            launcher.launch()
-            // Добавить логику обработки фотографий
-        }) {
-            Text("Сфотографировать")
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Button(onClick = {
-            bitmap?.let { capturedBitmap ->
-                isLoading = true // Устанавливаем состояние загрузки
-                coroutineScope.launch {
-                    val uploadSuccess = uploadPhoto(context, capturedBitmap) // Загружаем фото
-
-                    if (uploadSuccess) {
-                        sharedViewModel.bitmap = capturedBitmap // Сохраняем Bitmap в ViewModel
-
-                        // Загружаем фото и результаты
-                        fetchPhotosAndResults(context, database) { results ->
-                            isLoading = false // Сбрасываем состояние загрузки
-                            if (results.isNotEmpty()) {
-                                navController.navigate("result/${System.currentTimeMillis()}")
-                            } else {
-                                Toast.makeText(context, "Нет результатов", Toast.LENGTH_SHORT)
-                                    .show()
-                            }
-                        }
-                    } else {
-                        isLoading = false // Сбрасываем состояние загрузки в случае ошибки
-                        Toast.makeText(context, "Ошибка загрузки изображения", Toast.LENGTH_SHORT)
-                            .show()
-                    }
-                }
-            } ?: run {
-                // Обработка случая, когда bitmap равен null (например, пользователь не сделал фотографию)
-                Toast.makeText(context, "Сначала сделайте фотографию", Toast.LENGTH_SHORT).show()
-            }
-            // Логика перехода на экран результатов
-        }) {
-            Text("Показать результаты")
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        if (isLoading) {
-            CircularProgressIndicator()
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-
     }
 
 }
 
-
-/**
- * Отображение результатов обработки
- */
-@Composable
-fun ResultScreen(bitmap: Bitmap?, navController: NavHostController, database: AppDatabase) {
-    val coroutineScope = rememberCoroutineScope()
-    var results by remember { mutableStateOf(emptyList<DetectionResult>()) }
-    var imageUri by remember { mutableStateOf<String?>(null) }
-    var isLoading by remember { mutableStateOf(true) }
-
-    LaunchedEffect(Unit) {
-        // Передаем photoId для получения данных последней фотографии
-        val photoId = fetchLastPhotoId(database)
-        // Получаем данные из БД
-        results = fetchResultsFromDatabase(database, photoId)
-        isLoading = false
-    }
-
-    Column(
-        modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        if (isLoading) {
-            Text("Загрузка...")
-        } else {
-            if (results.isNotEmpty()) {
-                Text("На фото обнаружено:")
+suspend fun updateTaskStatus(taskId: Long, newStatus: String) {
+    withContext(Dispatchers.IO) {
+        try {
+            val response = RetrofitClient.apiService
+                .updateTaskStatus(taskId, TaskStatusUpdate(newStatus))
+                .awaitResponse()
+            if (!response.isSuccessful) {
+                throw Exception("Status update failed")
             }
-            Spacer(modifier = Modifier.height(16.dp))
-
-            if (bitmap != null) {
-                Box(modifier = Modifier.size(300.dp)) {
-                    Image(
-                        bitmap = bitmap.asImageBitmap(),
-                        contentDescription = "Captured Image",
-                        modifier = Modifier.fillMaxSize()
-                    )
-                }
-            } else {
-                Text("Нет изображения для отображения")
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            if (results.isEmpty()) {
-                Text("Данные не найдены.")
-            } else {
-                LazyColumn {
-                    items(results) { result ->
-                        Card(modifier = Modifier.padding(8.dp)) {
-                            Column(modifier = Modifier.padding(16.dp)) {
-                                Text("Объект: ${result.label}")
-                                Text("Доверие: ${result.confidence}")
-                            }
-                        }
-                    }
-                }
-            }
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
-        Spacer(modifier = Modifier.height(16.dp))
-        Button(onClick = { navController.popBackStack() }) { Text("Назад") }
     }
 }
-
 
 /**
  * Отправляет фото на сервер

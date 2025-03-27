@@ -1,4 +1,4 @@
-package com.example.recognition_app
+package com.example.recognition_app.viemodels
 
 import android.graphics.Bitmap
 import androidx.lifecycle.ViewModel
